@@ -1,6 +1,6 @@
 [package]
 name = "tsuratsura"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.88"
 description = "つらつら — 1日の仕事を、つらつら書く。今日の1枚のプレーンテキスト業務メモ"
