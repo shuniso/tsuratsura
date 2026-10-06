@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use chrono::NaiveDate;
 use iced::keyboard::{Key, Modifiers, key};
+use iced::mouse::ScrollDelta;
 use iced::widget::text_editor::{Action, Edit};
 use iced::{Size, window};
 
@@ -321,4 +322,139 @@ fn closing_collapsed_window_with_unsaved_text_keeps_it_open() {
 
     assert!(app.is_collapsed());
     assert_eq!(app.text(), "未保存");
+}
+
+#[test]
+fn zoom_keys_change_font_size_within_range_and_reset() {
+    let dir = temp_dir("zoom-keys");
+    fs::write(dir.join("config.toml"), "font_size = 20\n").unwrap();
+    let mut app = App::with_paths(&dir.join("config.toml"), &dir.join("data"), d(2026, 9, 30));
+    assert_eq!(app.font_size(), 20);
+
+    // `+` は Shift なしの同じキー（US 配列の `=`、JIS 配列の `;`）でも拡大する
+    for (key, code) in [
+        ("+", key::Code::NumpadAdd),
+        ("=", key::Code::Equal),
+        (";", key::Code::Semicolon),
+    ] {
+        press(
+            &mut app,
+            Key::Character(key.into()),
+            code,
+            Modifiers::COMMAND,
+        );
+    }
+    assert_eq!(app.font_size(), 23);
+    press(
+        &mut app,
+        Key::Character(";".into()),
+        key::Code::Semicolon,
+        Modifiers::COMMAND | Modifiers::SHIFT,
+    );
+    assert_eq!(app.font_size(), 24);
+
+    press(
+        &mut app,
+        Key::Character("-".into()),
+        key::Code::Minus,
+        Modifiers::COMMAND,
+    );
+    assert_eq!(app.font_size(), 23);
+
+    // Primary なしの入力や AltGr（Ctrl+Alt）での記号入力では変えない
+    press(
+        &mut app,
+        Key::Character("-".into()),
+        key::Code::Minus,
+        Modifiers::empty(),
+    );
+    press(
+        &mut app,
+        Key::Character("+".into()),
+        key::Code::BracketRight,
+        Modifiers::COMMAND | Modifiers::ALT,
+    );
+    assert_eq!(app.font_size(), 23);
+
+    let _ = app.update(Message::Zoom(100));
+    assert_eq!(app.font_size(), 72);
+    let _ = app.update(Message::Zoom(-100));
+    assert_eq!(app.font_size(), 8);
+
+    press(
+        &mut app,
+        Key::Character("0".into()),
+        key::Code::Digit0,
+        Modifiers::COMMAND,
+    );
+    assert_eq!(app.font_size(), 20);
+}
+
+#[test]
+fn wheel_zooms_only_while_primary_is_held() {
+    let dir = temp_dir("zoom-wheel");
+    let mut app = App::with_paths(&dir.join("config.toml"), &dir.join("data"), d(2026, 9, 30));
+    let lines = |y| Message::WheelScrolled(ScrollDelta::Lines { x: 0.0, y });
+    let pixels = |y| Message::WheelScrolled(ScrollDelta::Pixels { x: 0.0, y });
+    assert_eq!(app.font_size(), 15);
+
+    let _ = app.update(lines(1.0));
+    assert_eq!(app.font_size(), 15);
+
+    let _ = app.update(Message::ModifiersChanged(Modifiers::COMMAND));
+    let _ = app.update(lines(1.0));
+    assert_eq!(app.font_size(), 16);
+    // 1ノッチが小さな値で届く環境でも1段階ずつ変える
+    let _ = app.update(lines(-0.1));
+    assert_eq!(app.font_size(), 15);
+
+    // ピクセル単位の入力は、移動量が溜まってから1段階変える
+    let _ = app.update(pixels(10.0));
+    assert_eq!(app.font_size(), 15);
+    let _ = app.update(pixels(30.0));
+    assert_eq!(app.font_size(), 16);
+    let _ = app.update(pixels(-80.0));
+    assert_eq!(app.font_size(), 14);
+
+    // Primary を離すと端数を持ち越さない
+    let _ = app.update(pixels(30.0));
+    let _ = app.update(Message::ModifiersChanged(Modifiers::empty()));
+    let _ = app.update(pixels(30.0));
+    let _ = app.update(Message::ModifiersChanged(Modifiers::COMMAND));
+    let _ = app.update(pixels(30.0));
+    assert_eq!(app.font_size(), 14);
+}
+
+#[test]
+fn zoom_is_ignored_while_editor_is_hidden() {
+    let dir = temp_dir("zoom-hidden");
+    let mut app = App::with_paths(&dir.join("config.toml"), &dir.join("data"), d(2026, 9, 30));
+
+    let _ = app.update(Message::Collapse(Size::new(720.0, 640.0)));
+    press(
+        &mut app,
+        Key::Character("=".into()),
+        key::Code::Equal,
+        Modifiers::COMMAND,
+    );
+    assert_eq!(app.font_size(), 15);
+    let _ = app.update(Message::Expand);
+
+    let _ = app.update(Message::OpenPicker(PickerKind::Entry));
+    press(
+        &mut app,
+        Key::Character("=".into()),
+        key::Code::Equal,
+        Modifiers::COMMAND,
+    );
+    assert_eq!(app.font_size(), 15);
+    let _ = app.update(Message::ClosePicker);
+
+    press(
+        &mut app,
+        Key::Character("=".into()),
+        key::Code::Equal,
+        Modifiers::COMMAND,
+    );
+    assert_eq!(app.font_size(), 16);
 }

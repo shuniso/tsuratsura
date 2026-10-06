@@ -10,9 +10,9 @@ use iced::keyboard::{self, Key, key};
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::text_editor::{self, Binding, KeyPress, Status};
 use iced::widget::{button, column, container, mouse_area, operation, row, space, stack, text};
-use iced::{Color, Element, Fill, Size, Subscription, Task, window};
+use iced::{Color, Element, Fill, Size, Subscription, Task, mouse, window};
 
-use crate::config::{self, APP_ID, Config};
+use crate::config::{self, APP_ID, Config, FONT_SIZE_RANGE};
 use crate::editor::{self, History};
 use crate::{date, entry, saver, storage, ui};
 
@@ -20,6 +20,9 @@ const EDITOR_ID: &str = "editor";
 
 /// 折り畳んだ時のウィンドウの内寸。
 const BAR_SIZE: Size = Size::new(260.0, 28.0);
+
+/// ピクセル単位のホイール入力（トラックパッドなど）で、フォントサイズを1段階変える移動量。
+const ZOOM_PIXELS_PER_STEP: f32 = 40.0;
 
 /// セレクタの種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +69,10 @@ pub struct App {
     collapsed: bool,
     /// 折り畳む前のウィンドウの内寸。展開時に戻す。
     expanded_size: Size,
+    /// 本文のフォントサイズ。config の値から始まり、ズームで変わる（保存しない）。
+    font_size: u16,
+    /// ピクセル単位のホイール入力のうち、まだズームに使っていない端数。
+    zoom_remainder: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +88,10 @@ pub enum Message {
     /// 現在の内寸を覚えて折り畳む。
     Collapse(Size),
     Expand,
+    /// 本文のフォントサイズを指定した段階だけ変える。
+    Zoom(i16),
+    ZoomReset,
+    WheelScrolled(mouse::ScrollDelta),
     Undo,
     Redo,
     CopyAll,
@@ -122,6 +133,7 @@ impl App {
         });
         let active_date = today;
         let pinned = config.always_on_top;
+        let font_size = config.font_size;
 
         let mut app = Self {
             config,
@@ -148,6 +160,8 @@ impl App {
             pinned,
             collapsed: false,
             expanded_size: Size::ZERO,
+            font_size,
+            zoom_remainder: 0.0,
         };
         app.open_day(active_date);
         app.purge_old_days();
@@ -180,6 +194,10 @@ impl App {
         self.collapsed
     }
 
+    pub fn font_size(&self) -> u16 {
+        self.font_size
+    }
+
     fn is_dirty(&self) -> bool {
         self.rev != self.saved_rev
     }
@@ -190,6 +208,8 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            // Primary を押したままのホイールはズームに使い、本文は動かさない
+            Message::Edit(text_editor::Action::Scroll { .. }) if self.primary_held => {}
             Message::Edit(action) => {
                 let action = normalize_paste(action);
                 let is_edit = action.is_edit();
@@ -227,7 +247,7 @@ impl App {
             }
             Message::Choose(index) => return self.choose(index),
             Message::KeyPressed(key, physical, modifiers) => {
-                if let Some(message) = window_shortcut(&key, physical, modifiers) {
+                if let Some(message) = app_shortcut(&key, physical, modifiers) {
                     return self.update(message);
                 }
                 if self.collapsed {
@@ -257,6 +277,14 @@ impl App {
             }
             Message::Collapse(size) => return self.collapse(size),
             Message::Expand => return self.expand(),
+            Message::Zoom(steps) => self.set_font_size(self.font_size.saturating_add_signed(steps)),
+            Message::ZoomReset => self.set_font_size(self.config.font_size),
+            Message::WheelScrolled(delta) => {
+                if self.primary_held {
+                    let steps = self.wheel_zoom_steps(delta);
+                    self.set_font_size(self.font_size.saturating_add_signed(steps));
+                }
+            }
             Message::Undo => {
                 if let Some(content) = self.history.undo(&self.content) {
                     self.content = content;
@@ -276,6 +304,8 @@ impl App {
                 self.primary_held = modifiers.command();
                 if self.primary_held {
                     self.flush();
+                } else {
+                    self.zoom_remainder = 0.0;
                 }
             }
             Message::Flush | Message::WindowUnfocused => self.flush(),
@@ -328,6 +358,30 @@ impl App {
             window::latest().and_then(move |id| window::resize(id, size)),
             operation::focus(EDITOR_ID),
         ])
+    }
+
+    /// 本文のフォントサイズを変える。本文が見えていない折り畳み中・セレクタ表示中は変えない。
+    fn set_font_size(&mut self, size: u16) {
+        if self.collapsed || self.picker.is_some() {
+            return;
+        }
+        self.font_size = size.clamp(*FONT_SIZE_RANGE.start(), *FONT_SIZE_RANGE.end());
+    }
+
+    /// ホイール入力をフォントサイズの段階数にする。上へ回すと拡大。
+    fn wheel_zoom_steps(&mut self, delta: mouse::ScrollDelta) -> i16 {
+        match delta {
+            // 行単位の値は環境で大きさが違う（macOS のマウスは1ノッチが 0.1 程度）ので、向きだけ使う
+            mouse::ScrollDelta::Lines { y, .. } if y > 0.0 => 1,
+            mouse::ScrollDelta::Lines { y, .. } if y < 0.0 => -1,
+            mouse::ScrollDelta::Lines { .. } => 0,
+            mouse::ScrollDelta::Pixels { y, .. } => {
+                self.zoom_remainder += y / ZOOM_PIXELS_PER_STEP;
+                let steps = self.zoom_remainder.trunc();
+                self.zoom_remainder -= steps;
+                steps as i16
+            }
+        }
     }
 
     /// セレクタの `(キー, 表示名)`。
@@ -643,7 +697,7 @@ impl App {
                 .style(move |_| notice_style(has_notice)),
         )
         .on_press(Message::Expand)
-        .interaction(iced::mouse::Interaction::Pointer)
+        .interaction(mouse::Interaction::Pointer)
         .into()
     }
 
@@ -674,7 +728,7 @@ impl App {
             .id(EDITOR_ID)
             .on_action(Message::Edit)
             .key_binding(key_binding)
-            .size(f32::from(self.config.font_size))
+            .size(f32::from(self.font_size))
             .padding(12)
             .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
             .height(Fill)
@@ -785,18 +839,32 @@ fn request_collapse() -> Task<Message> {
     })
 }
 
-/// 最前面固定・折り畳みのショートカット。
-fn window_shortcut(
+/// エディタにフォーカスがなくても効くショートカット（最前面固定・折り畳み・ズーム）。
+fn app_shortcut(
     key: &Key,
     physical: keyboard::key::Physical,
     modifiers: keyboard::Modifiers,
 ) -> Option<Message> {
-    if !modifiers.command() || !modifiers.shift() {
+    if !modifiers.command() {
         return None;
     }
-    match key.to_latin(physical)?.to_ascii_lowercase() {
-        't' => Some(Message::TogglePin),
-        'm' => Some(Message::ToggleCollapse),
+    let pressed = key.to_latin(physical)?.to_ascii_lowercase();
+    if modifiers.shift() {
+        match pressed {
+            't' => return Some(Message::TogglePin),
+            'm' => return Some(Message::ToggleCollapse),
+            _ => {}
+        }
+    }
+    // Windows の AltGr は Ctrl+Alt として届く。記号の入力をズームと取り違えない
+    if modifiers.alt() {
+        return None;
+    }
+    match pressed {
+        // `+` は Shift なしの同じキー（US 配列の `=`、JIS 配列の `;`）でも受ける
+        '+' | '=' | ';' => Some(Message::Zoom(1)),
+        '-' => Some(Message::Zoom(-1)),
+        '0' => Some(Message::ZoomReset),
         _ => None,
     }
 }
@@ -809,6 +877,7 @@ fn runtime_event(event: Event, status: event::Status, _window: window::Id) -> Op
         Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
             Some(Message::ModifiersChanged(modifiers))
         }
+        Event::Mouse(mouse::Event::WheelScrolled { delta }) => Some(Message::WheelScrolled(delta)),
         Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             physical_key,
@@ -839,7 +908,7 @@ fn key_binding(press: KeyPress) -> Option<Binding<Message>> {
     }
 
     let modifiers = press.modifiers;
-    if let Some(message) = window_shortcut(&press.key, press.physical_key, modifiers) {
+    if let Some(message) = app_shortcut(&press.key, press.physical_key, modifiers) {
         return Some(Binding::Custom(message));
     }
     if modifiers.command() {

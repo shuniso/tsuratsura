@@ -16,7 +16,7 @@ pub const APP_ID: &str = "tsuratsura";
 pub const DEFAULT_CONFIG_TOML: &str = include_str!("../config.example.toml");
 
 const DEBOUNCE_RANGE: std::ops::RangeInclusive<u64> = 50..=10_000;
-const FONT_SIZE_RANGE: std::ops::RangeInclusive<u16> = 8..=72;
+pub const FONT_SIZE_RANGE: std::ops::RangeInclusive<u16> = 8..=72;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
