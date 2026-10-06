@@ -21,6 +21,9 @@ const EDITOR_ID: &str = "editor";
 /// 折り畳んだ時のウィンドウの内寸。
 const BAR_SIZE: Size = Size::new(260.0, 28.0);
 
+/// 本文の行の高さ（フォントサイズに対する倍率）。Iced 既定の 1.3 より少し広げる。
+const LINE_HEIGHT: f32 = 1.4;
+
 /// ピクセル単位のホイール入力（トラックパッドなど）で、フォントサイズを1段階変える移動量。
 const ZOOM_PIXELS_PER_STEP: f32 = 40.0;
 
@@ -729,6 +732,7 @@ impl App {
             .on_action(Message::Edit)
             .key_binding(key_binding)
             .size(f32::from(self.font_size))
+            .line_height(LINE_HEIGHT)
             .padding(12)
             .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
             .height(Fill)
