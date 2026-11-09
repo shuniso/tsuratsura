@@ -23,6 +23,11 @@ iced = { version = "0.14", default-features = false, features = [
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.6"
 
+[dev-dependencies]
+# ドラッグ選択のテストで、ウィンドウなしに UI へイベントを流すため（iced が内部で使う版と揃える）
+iced_runtime = { version = "0.14.0", default-features = false }
+iced_tiny_skia = { version = "0.14.1", default-features = false }
+
 [build-dependencies]
 winresource = "0.1.31"
 

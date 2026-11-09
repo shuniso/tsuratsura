@@ -24,6 +24,9 @@ const BAR_SIZE: Size = Size::new(260.0, 28.0);
 /// 本文の行の高さ（フォントサイズに対する倍率）。Iced 既定の 1.3 より少し広げる。
 const LINE_HEIGHT: f32 = 1.4;
 
+/// 本文の余白。
+const EDITOR_PADDING: f32 = 12.0;
+
 /// ピクセル単位のホイール入力（トラックパッドなど）で、フォントサイズを1段階変える移動量。
 const ZOOM_PIXELS_PER_STEP: f32 = 40.0;
 
@@ -733,7 +736,7 @@ impl App {
             .key_binding(key_binding)
             .size(f32::from(self.font_size))
             .line_height(LINE_HEIGHT)
-            .padding(12)
+            .padding(EDITOR_PADDING)
             .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
             .height(Fill)
             .style(|theme, status| text_editor::Style {
@@ -743,6 +746,9 @@ impl App {
         if let Some(font) = self.editor_font {
             editor = editor.font(font);
         }
+
+        // 本文の外へのドラッグでの自動スクロールと、Shift+クリックでの範囲選択を足す
+        let editor = ui::mouse_select::mouse_select(editor, EDITOR_PADDING, Message::Edit);
 
         // ピッカーや通知の有無でウィジェット構造を変えない（エディタのフォーカスを保つ）
         let mut body = stack![editor];
